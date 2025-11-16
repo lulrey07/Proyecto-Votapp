@@ -1,0 +1,6 @@
+@Votapp.API_HostAddress = http://localhost:5175
+
+GET {{Votapp.API_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

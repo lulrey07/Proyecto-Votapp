@@ -1,0 +1,90 @@
+# Archivos y carpetas generadas por Visual Studio y .NET
+## IDE - Visual Studio / Visual Studio Code
+.vs/
+.vscode/
+*.user
+*.suo
+*.sln.docstates
+.idea/
+*.swp
+*.swo
+
+## Compilación y artefactos
+bin/
+obj/
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+## NuGet
+*.nupkg
+*.snupkg
+*.nuget.props
+*.nuget.targets
+.nuget/
+
+## Entity Framework
+migrations/
+
+## Test Results
+TestResults/
+*.trx
+*.coverage
+
+## Dependencias locales
+packages/
+.packages/
+
+## Archivos temporales
+*.tmp
+*.temp
+*~
+*.backup
+*.swp
+*.swo
+Thumbs.db
+
+## Secretos y configuración local
+appsettings.local.json
+appsettings.*.Development.json
+.env
+.env.local
+secrets.json
+
+## Base de datos local (si usas SQLite o similar)
+*.db
+*.db-shm
+*.db-wal
+
+## Logs de aplicación
+logs/
+Logs/
+*.log
+
+## Archivos de coverage
+coverage/
+opencover/
+
+## Rider (alternativa a Visual Studio)
+.idea/
+*.sln.iml
+
+## Archivos de build cache
+.dotnet/
+.dotnet-sdk/
+
+## Cualquier archivo generado por herramientas de terceros
+dist/
+build/
+out/

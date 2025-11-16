@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+/* Fuente amigable */
+:root {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Reset para evitar conflictos */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  background-color: #f8fafc;
+  color: #1e293b;
+}
+
+/* Mejorar contraste de inputs */
+input, textarea, select {
+  color: #1e293b;
+  background-color: #ffffff;
+}
+
+input::placeholder, textarea::placeholder {
+  color: #94a3b8;
+  opacity: 1;
+}
+
+/* Animaciones del prototipo */
+.animate-fade-in { 
+  animation: fadeIn 0.3s ease-in-out; 
+}
+
+@keyframes fadeIn { 
+  from { opacity: 0; transform: translateY(10px); } 
+  to { opacity: 1; transform: translateY(0); } 
+}
+
+.animate-slide-in { 
+  animation: slideIn 0.3s ease-out; 
+}
+
+@keyframes slideIn { 
+  from { transform: translateX(100%); } 
+  to { transform: translateX(0); } 
+}
+
+/* Gradiente de fondo para login */
+.gradient-bg { 
+  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); 
+}
+
+/* Mejoras de hover y transiciones */
+.card-hover {
+  transition: all 0.2s ease;
+}
+
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+}
+
+/* Progress bar animation */
+.progress-bar {
+  transition: width 0.5s ease;
+}
