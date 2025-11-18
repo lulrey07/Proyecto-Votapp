@@ -549,6 +549,155 @@ Luego en GitHub:
 
 ---
 
+## 🔄 Actualizar Ramas Remotas desde Local
+
+Actualizar ramas remotas es fundamental en el flujo diario. Aquí están los escenarios principales:
+
+### Escenario 1: Empujar cambios locales a remoto (Más común)
+
+```bash
+# Asegúrate de estar en la rama correcta
+git checkout develop
+
+# Verifica cambios locales
+git status
+
+# Haz commit si no lo hiciste
+git add .
+git commit -m "feat(voting): add validation logic"
+
+# Empuja los cambios a remoto
+git push origin develop
+
+# O si es la primera vez (configura upstream)
+git push -u origin develop
+```
+
+**Diferencia entre `git push origin develop` y `git push`:**
+
+#### `git push origin develop` (Explícito)
+```powershell
+git push origin develop
+```
+- **Qué hace:** Empuja la rama local `develop` hacia `origin/develop` (remoto)
+- **Sintaxis:** `git push <remoto> <rama-local>`
+- **Ventaja:** Siempre funciona, sin importar la configuración de upstream
+- **Recomendado para:** Cuando no tienes upstream configurado aún, o cuando quieres ser explícito
+
+#### `git push` (Implícito - Usa Upstream)
+```powershell
+git push
+```
+- **Qué hace:** Empuja usando la rama "upstream" que configuraste
+- **Requisito:** Debe tener upstream configurado (con `git push -u` antes)
+- **Ventaja:** Más rápido, menos escribir
+- **Recomendado para:** Flujo diario después de configurar upstream
+
+**Ejemplo de flujo completo:**
+
+```bash
+# Primera vez: usar -u para configurar upstream
+git push -u origin develop
+# → Configura develop para rastrear origin/develop
+# → Ahora puedes usar solo `git push` desde develop
+
+# Próximas veces: basta con
+git push
+# → Git sabe que debe ir a origin/develop (ya está configurado)
+```
+
+**Tabla Comparativa:**
+
+| Escenario | `git push origin develop` | `git push` |
+|-----------|---------------------------|-----------|
+| Primera vez subiendo rama | ✅ Funciona | ❌ Error: "no upstream" |
+| Después de `git push -u` | ✅ Funciona | ✅ Funciona |
+| Especificidad | Explícito (claro dónde va) | Implícito (depende de config) |
+| Seguridad | Siempre seguro | Seguro si upstream es correcto |
+
+**Recomendación para tu flujo:**
+
+```powershell
+# Tu primer push de HOY (configura upstream)
+git checkout main
+git push -u origin main
+
+git checkout develop
+git push -u origin develop
+
+# Próximos pushes (diarios)
+# Ya puedes usar:
+git push  # ← Sin argumentos, Git sabe dónde ir
+```
+
+### Escenario 2: Tu rama local está atrás de remota (sincronizar)
+
+```bash
+# Opción A: Pull (trae y mergea automáticamente)
+git pull origin develop
+
+# Opción B: Fetch + Merge (más control)
+git fetch origin
+git merge origin/develop
+
+# Opción C: Fetch + Rebase (historial más limpio)
+git fetch origin
+git rebase origin/develop
+```
+
+### Escenario 3: Crear nueva rama remota desde local
+
+```bash
+# Tienes una rama local feature/HU-U01-user-registration
+# Quieres subirla por primera vez al remoto
+
+git checkout feature/HU-U01-user-registration
+git push -u origin feature/HU-U01-user-registration
+
+# El flag -u configura upstream automáticamente
+# Ahora `git push` funcionará desde esta rama
+```
+
+### Escenario 4: Forzar actualización (⚠️ Usar con cuidado)
+
+```bash
+# ⚠️ SOLO si estás 100% seguro de lo que haces
+# Esto sobreescribe el historial remoto
+
+# Opción A: Force push (destructivo)
+git push --force origin develop
+
+# Opción B: Force with lease (más seguro, rechaza si hay cambios remotos nuevos)
+git push --force-with-lease origin develop
+```
+
+### Escenario 5: Sincronizar TODAS las ramas locales
+
+```bash
+# Traer información de TODAS las ramas remotas
+git fetch origin
+
+# Ver todas las ramas remotas
+git branch -r
+
+# Si quieres traer una rama remota que no tienes local
+git checkout feature/HU-V01-create-votation
+# Git automáticamente la crea local y la rastrea
+```
+
+### Tabla de Referencia Rápida
+
+| Comando | Efecto | Cuándo |
+|---------|--------|--------|
+| `git push origin <rama>` | Empuja a remoto (explícito) | Siempre seguro |
+| `git push -u origin <rama>` | Push + configura upstream | Primera vez en cada rama |
+| `git push` | Usa upstream configurado | Después de `-u` |
+| `git pull origin <rama>` | Trae cambios remotos | Sincronizar con remoto |
+| `git fetch origin` | Descarga sin mergear | Ver cambios antes de integrar |
+| `git push --force-with-lease` | Fuerza push (más seguro) | ⚠️ Solo si sabes qué haces |
+
+---
+
 ## 📋 Merges y Pull Requests
 
 ### Ciclo de Revisión
