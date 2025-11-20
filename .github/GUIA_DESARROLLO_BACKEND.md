@@ -647,6 +647,36 @@ Yo verifico que todo esté correcto y te doy el siguiente paso + recomendaciones
 
 ---
 
+## 🔁 Actualizaciones (2025-11-20)
+
+Se han incorporado decisiones técnicas y documentación adicional al repositorio para orientar la implementación backend del MVP. Revisa los documentos ligados en la carpeta `.github/` para alinearte con el flujo y las migraciones.
+
+- **Documentos nuevos / actualizados**:
+    - `.github/WORKFLOW_SISTEMA.md`: workflow completo del sistema (registro, ciclo de vida de votaciones, participación contextual, manejo de race conditions, autorización basada en recursos, arquitectura de BD).
+    - `.github/Respuestas de Copilot/CHECKLIST_IMPLEMENTACION_BACKEND.md`: checklist ampliado por fases (0–4) con ejemplos de código, mapeos de `VotappDbContext`, repositorios, UnitOfWork, controllers y handlers de autorización.
+
+- **Decisiones técnicas clave (resumen práctico)**:
+    - Persistencia: usar **Entity Framework Core** con **MySQL** (migraciones EF y constraints en la BD).
+    - Entidades críticas: `Votacion` (Aggregate Root), `Participacion` (rol contextual por votación) y `Voto`.
+    - Integridad y race conditions:
+        - Añadir índice UNIQUE en `Votos` sobre `(VotacionId, UsuarioId)` para garantizar RN-02 (un voto por usuario por votación).
+        - Añadir índice UNIQUE en `Participaciones` sobre `(UsuarioId, VotacionId)` para garantizar RN-01 (un rol por usuario por votación).
+        - Manejar `DbUpdateException` en la capa de repositorios/casos de uso para convertir violaciones de constraint en errores de negocio controlados.
+    - Autorización: usar **authorization handlers** (resource-based) registrados en `Program.cs` para evaluar roles por votación (ej.: `SoyAdministradorVotacionRequirement` / `SoyVotanteActivoRequirement`). Las comprobaciones consultan la tabla `Participaciones`.
+    - Seguridad: autenticación **JWT Bearer**; usar claim `sub` para identificar `UsuarioId` en handlers y controllers.
+    - Real-time: planificar **SignalR** para emisión de resultados en tiempo real (PR / módulo dedicado).
+
+- **PR-by-PR recomendadas (resumen)**:
+    - PR1: `feature/solution-structure` — Crear la solución y proyectos base (FASE 0).
+    - PR2: `feature/domain-entities` — Implementar entidades del dominio y enums (FASE 1).
+    - PR3: `feature/infrastructure-dbcontext` — `VotappDbContext` y migración inicial (FASE 3). Incluir UNIQUE constraints para `Votos`, `Participaciones`, `Votacion.CodigoAcceso`.
+    - PR4: `feature/application-services` — Repositorios, UnitOfWork y casos de uso (FASE 2/3). Añadir manejo de `DbUpdateException`.
+    - PR5: `feature/presentation-api` — Controllers, JWT, policies/handlers de autorización (FASE 4).
+    - PR6: `feature/signalr-results` — SignalR hub y emisión de eventos en tiempo real.
+    - PR7: `feature/tests-ci` — Pruebas de integración y CI.
+
+---
+
 *Guía creada para ti*  
 *Mentor: Senior Software Architect*  
 *Proyecto: Votapp MVP 1*

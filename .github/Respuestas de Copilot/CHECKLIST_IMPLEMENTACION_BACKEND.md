@@ -25,6 +25,10 @@ Es como el "andamiaje" de una construcción: proporciona la base inicial sobre l
 
 ## 🎯 CHECKLIST - Fases de Implementación
 
+**Nota importante**: Cada fase se alinea con el workflow del sistema documentado en `.github/WORKFLOW_SISTEMA.md`. Consulta ese documento para entender el flujo de usuarios, votaciones, roles dinámicos y BD.
+
+---
+
 ### FASE 0: PREPARACIÓN (Hoy o Mañana)
 
 #### Tarea 0.1: Crear Proyecto Base .NET 9
@@ -150,7 +154,14 @@ dotnet add Votapp.API/Votapp.API.csproj package Serilog.AspNetCore
 ### FASE 1: DOMAIN LAYER (Entidades y Reglas)
 
 #### Tarea 1.1: Crear Entidades POCO (Domain/Entities)
-**Descripción**: Definir las clases de dominio (User, Votacion, Voto, VotacionOpcion)
+**Descripción**: Definir las clases de dominio (User, Votacion, Voto, VotacionOpcion, Participacion)
+
+**Contexto del Workflow** (ver `WORKFLOW_SISTEMA.md`):
+- User: Identidad global, autenticación
+- Votacion: Aggregate Root, ciclo de vida (Paused → Activa → Finalizada)
+- VotacionOpcion: Opciones dentro de votación (RN-03: >=2)
+- Voto: Registro inmutable de voto (RN-02: único por usuario, RN-08: inmutable)
+- **Participacion**: LA TABLA CLAVE - Rol contextual dinámico (RN-01). Un usuario puede ser Administrador en V1 y Votante en V2.
 
 **Estructura que necesitas**:
 ```
@@ -159,7 +170,8 @@ Votapp.Domain/
 │   ├── User.cs
 │   ├── Votacion.cs
 │   ├── Voto.cs
-│   └── VotacionOpcion.cs
+│   ├── VotacionOpcion.cs
+│   └── Participacion.cs        ← CRÍTICA: Rol contextual
 ├── Enums/
 │   ├── EstadoVotacion.cs
 │   └── RoleUsuario.cs
@@ -255,10 +267,39 @@ namespace Votapp.Domain.Entities
 }
 ```
 
+**Ejemplo 5 - `Participacion.cs` (CRÍTICA - Rol Contextual Dinámico)**:
+```csharp
+// Votapp.Domain/Entities/Participacion.cs
+using Votapp.Domain.Enums;
+
+namespace Votapp.Domain.Entities
+{
+    public class Participacion
+    {
+        public int Id { get; set; }
+        public int UsuarioId { get; set; }       // FK a User
+        public int VotacionId { get; set; }      // FK a Votacion
+        public RoleUsuario Rol { get; set; }     // "Administrador" o "Votante"
+        public DateTime FechaUnion { get; set; }
+
+        // Relaciones
+        public User? Usuario { get; set; }
+        public Votacion? Votacion { get; set; }
+
+        // NOTA: Esta tabla es la clave del diseño (RN-01)
+        // Permite que un usuario tenga ROLES DISTINTOS en votaciones diferentes
+        // Ejemplo:
+        //   - Juan es Administrador en votacion V1 (la creó)
+        //   - Juan es Votante en votacion V2 (se unió por código)
+    }
+}
+```
+
 **Criterio de Aceptación** ✅:
-- [ ] Las 4 entidades se crean sin errores
+- [ ] Las 5 entidades (incluyendo Participacion) se crean sin errores
 - [ ] Tienen navegación bidireccional (relaciones)
 - [ ] Compilación exitosa
+- [ ] Entiendes que **Participacion** es la clave del rol contextual dinámico (RN-01)
 
 ---
 
@@ -286,8 +327,13 @@ namespace Votapp.Domain.Enums
 {
     public enum RoleUsuario
     {
-        Administrator = 0,  // Crea y gestiona votaciones
-        Voter = 1          // Solo participa en votaciones
+        // Roles contextuales (aplicables a una votación específica, tabla Participaciones)
+        Administrador = 0,  // Creador de votación, control total
+        Votante = 1         // Participante, solo puede votar
+        
+        // NOTA: Estos roles son POR VOTACIÓN, no globales
+        // Ver tabla Participaciones y sección "Modelo de Participación Contextual" 
+        // en WORKFLOW_SISTEMA.md
     }
 }
 ```
@@ -450,6 +496,10 @@ namespace Votapp.Domain.Interfaces
 ---
 
 ### FASE 2: APPLICATION LAYER (DTOs y Validadores)
+
+**Objetivo según workflow**: Definir DTOs para comunicación API y validadores para RN. Ver "Flujo: Crear Votación" y "Flujo: Emitir Voto" en `WORKFLOW_SISTEMA.md`.
+
+**Reglas a validar**: RN-03 (>=2 opciones), RN-04 (ventana temporal)
 
 #### Tarea 2.1: Crear DTOs (Application/DTOs)
 **Descripción**: Objetos de transferencia de datos (requests y responses)
@@ -632,8 +682,12 @@ namespace Votapp.Application.Validators
 
 ### FASE 3: INFRASTRUCTURE LAYER (DbContext y Repositories)
 
-#### Tarea 3.1: Crear DbContext (Infrastructure/Persistence)
-**Descripción**: Configurar Entity Framework Core con MySQL
+**Objetivo según workflow**: Mapear entidades a BD con constraints que garanticen RN. Ver "Arquitectura de Base de Datos" en `WORKFLOW_SISTEMA.md`.
+
+**Reglas críticas en BD**:
+- RN-02: `UNIQUE(VotacionId, UserId)` en Votos → evita doble voto (race condition handling)
+- RN-05: `UNIQUE(CodigoAcceso)` en Votaciones → código único
+- RN-01: `UNIQUE(UsuarioId, VotacionId)` en Participaciones → rol contextual dinámico
 
 **Estructura**:
 ```
@@ -729,6 +783,31 @@ namespace Votapp.Infrastructure.Persistence
         }
     }
 }
+```
+
+**Configuración CRÍTICA de Participacion** (añadir también):
+```csharp
+// En VotappDbContext.OnModelCreating:
+
+// Configurar Participacion
+modelBuilder.Entity<Participacion>(entity =>
+{
+    entity.HasKey(e => e.Id);
+    entity.Property(e => e.Rol).HasConversion<string>();
+    
+    entity.HasOne(e => e.Usuario)
+        .WithMany(u => u.Participaciones)
+        .HasForeignKey(e => e.UsuarioId)
+        .OnDelete(DeleteBehavior.Cascade);
+
+    entity.HasOne(e => e.Votacion)
+        .WithMany(v => v.Participaciones)
+        .HasForeignKey(e => e.VotacionId)
+        .OnDelete(DeleteBehavior.Cascade);
+
+    // RN-01: Un rol por usuario por votación (rol contextual dinámico)
+    entity.HasIndex(e => new { e.UsuarioId, e.VotacionId }).IsUnique();
+});
 ```
 
 **Criterio de Aceptación** ✅:
@@ -883,7 +962,7 @@ namespace Votapp.Infrastructure.Persistence.Repositories
 }
 ```
 
-**Ejemplo 4 - `VotoRepository.cs`**:
+**Ejemplo 4 - `VotoRepository.cs`** (con RN-02 race condition handling):
 ```csharp
 // Votapp.Infrastructure/Persistence/Repositories/VotoRepository.cs
 using Microsoft.EntityFrameworkCore;
@@ -901,24 +980,94 @@ namespace Votapp.Infrastructure.Persistence.Repositories
             _context = context;
         }
 
-        public async Task<bool> UsuarioYaVotoAsync(int votacionId, int usuarioId)
+        public async Task<bool> UsuarioYaVotoAsync(Guid votacionId, Guid usuarioId)
         {
             // RN-02: Verificar que no hay dos votos del mismo usuario en la misma votación
             return await _context.Votos
                 .AnyAsync(v => v.VotacionId == votacionId && v.UsuarioId == usuarioId);
         }
 
-        public async Task<IEnumerable<Voto>> GetByVotacionAsync(int votacionId)
+        public async Task<IEnumerable<Voto>> GetByVotacionAsync(Guid votacionId)
         {
             return await _context.Votos
                 .Where(v => v.VotacionId == votacionId)
+                .Include(v => v.Usuario)
+                .Include(v => v.OpcionSeleccionada)
                 .ToListAsync();
         }
 
-        public async Task<int> ContarVotosPorOpcionAsync(int opcionId)
+        public async Task<int> ContarVotosPorOpcionAsync(Guid opcionId)
         {
             return await _context.Votos
                 .CountAsync(v => v.OpcionSeleccionadaId == opcionId);
+        }
+
+        // RN-02: Crear voto con verificación de race condition mediante UNIQUE constraint
+        public async Task<Voto> CreateVotoWithUniqueCheckAsync(Voto voto)
+        {
+            try
+            {
+                _context.Votos.Add(voto);
+                await _context.SaveChangesAsync();
+                return voto;
+            }
+            catch (DbUpdateException ex) when (ex.InnerException?.Message.Contains("Duplicate") ?? false)
+            {
+                // El constraint UNIQUE en BD (VotacionId, UsuarioId) previene 2do voto
+                throw new InvalidOperationException(
+                    $"El usuario {voto.UsuarioId} ya votó en la votación {voto.VotacionId}.", ex);
+            }
+        }
+    }
+}
+```
+
+**Ejemplo 4b - `ParticipacionRepository.cs`** (RN-01: contexto de rol dinámico):
+```csharp
+// Votapp.Infrastructure/Persistence/Repositories/ParticipacionRepository.cs
+using Microsoft.EntityFrameworkCore;
+using Votapp.Domain.Entities;
+using Votapp.Domain.Interfaces;
+
+namespace Votapp.Infrastructure.Persistence.Repositories
+{
+    public interface IParticipacionRepository : IRepository<Participacion>
+    {
+        Task<Participacion?> GetByUserAndVotacionAsync(Guid usuarioId, Guid votacionId);
+        Task<IEnumerable<Participacion>> GetByVotacionAsync(Guid votacionId);
+        Task<RoleUsuario?> GetUserRoleInVotacionAsync(Guid usuarioId, Guid votacionId);
+    }
+
+    public class ParticipacionRepository : Repository<Participacion>, IParticipacionRepository
+    {
+        private readonly VotappDbContext _context;
+
+        public ParticipacionRepository(VotappDbContext context) : base(context)
+        {
+            _context = context;
+        }
+
+        public async Task<Participacion?> GetByUserAndVotacionAsync(Guid usuarioId, Guid votacionId)
+        {
+            // RN-01: Obtener rol contextual del usuario en una votación específica
+            return await _context.Participaciones
+                .Include(p => p.Usuario)
+                .Include(p => p.Votacion)
+                .FirstOrDefaultAsync(p => p.UsuarioId == usuarioId && p.VotacionId == votacionId);
+        }
+
+        public async Task<IEnumerable<Participacion>> GetByVotacionAsync(Guid votacionId)
+        {
+            return await _context.Participaciones
+                .Where(p => p.VotacionId == votacionId)
+                .Include(p => p.Usuario)
+                .ToListAsync();
+        }
+
+        public async Task<RoleUsuario?> GetUserRoleInVotacionAsync(Guid usuarioId, Guid votacionId)
+        {
+            var participacion = await GetByUserAndVotacionAsync(usuarioId, votacionId);
+            return participacion?.Rol;
         }
     }
 }
@@ -1233,6 +1382,439 @@ namespace Votapp.API.Controllers
 
 ---
 
+#### Tarea 4.4: Crear VotacionesController (API/Controllers)
+**Descripción**: Endpoints para gestionar votaciones (CRUD)
+
+**Ejemplo**:
+```csharp
+// Votapp.API/Controllers/VotacionesController.cs
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Votapp.Application.DTOs.Votacion;
+using Votapp.Domain.Interfaces;
+using FluentValidation;
+
+namespace Votapp.API.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    public class VotacionesController : BaseController
+    {
+        private readonly IUnitOfWork _unitOfWork;
+        private readonly IValidator<CreateVotacionRequest> _votacionValidator;
+
+        public VotacionesController(IUnitOfWork unitOfWork, IValidator<CreateVotacionRequest> votacionValidator)
+        {
+            _unitOfWork = unitOfWork;
+            _votacionValidator = votacionValidator;
+        }
+
+        [HttpGet("{id}")]
+        public async Task<IActionResult> GetVotacion(Guid id)
+        {
+            var votacion = await _unitOfWork.Votaciones.GetWithOpcionsAsync(id);
+            if (votacion == null)
+                return ErrorResponse("Votación no encontrada", 404);
+
+            return SuccessResponse(votacion);
+        }
+
+        [HttpPost]
+        [Authorize] // Requiere autenticación (JWT)
+        public async Task<IActionResult> CreateVotacion([FromBody] CreateVotacionRequest request)
+        {
+            // 1. Validar request
+            var validation = await _votacionValidator.ValidateAsync(request);
+            if (!validation.IsValid)
+            {
+                var errors = validation.Errors.ToDictionary(e => e.PropertyName, e => e.ErrorMessage);
+                return ValidationErrorResponse(errors);
+            }
+
+            // 2. Obtener usuario actual (desde JWT claim)
+            var usuarioIdClaim = User.FindFirst("sub")?.Value;
+            if (!Guid.TryParse(usuarioIdClaim, out var usuarioId))
+                return ErrorResponse("No autorizado", 401);
+
+            // 3. Crear votación (Paused state)
+            var votacion = new Votapp.Domain.Entities.Votacion
+            {
+                Id = Guid.NewGuid(),
+                Titulo = request.Titulo,
+                Descripcion = request.Descripcion,
+                CreadorId = usuarioId,
+                CodigoAcceso = GenerarCodigoUnico(),
+                Estado = Votapp.Domain.Enums.EstadoVotacion.Paused,
+                FechaCreacion = DateTime.UtcNow,
+                FechaInicio = request.FechaInicio,
+                FechaCierre = request.FechaCierre
+            };
+
+            // 4. Agregar opciones
+            foreach (var opcion in request.Opciones)
+            {
+                votacion.Opciones.Add(new Votapp.Domain.Entities.VotacionOpcion
+                {
+                    Id = Guid.NewGuid(),
+                    Texto = opcion,
+                    VotacionId = votacion.Id
+                });
+            }
+
+            // 5. Crear participación: Administrador para el creador (RN-01)
+            var participacion = new Votapp.Domain.Entities.Participacion
+            {
+                Id = Guid.NewGuid(),
+                UsuarioId = usuarioId,
+                VotacionId = votacion.Id,
+                Rol = Votapp.Domain.Enums.RoleUsuario.Administrador,
+                FechaUnion = DateTime.UtcNow
+            };
+
+            // 6. Guardar
+            await _unitOfWork.Votaciones.AddAsync(votacion);
+            await _unitOfWork.Participaciones.AddAsync(participacion);
+            await _unitOfWork.SaveChangesAsync();
+
+            return SuccessResponse(new { id = votacion.Id, codigo = votacion.CodigoAcceso }, 
+                "Votación creada exitosamente", 201);
+        }
+
+        private string GenerarCodigoUnico()
+        {
+            const string chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+            var random = new Random();
+            return new string(Enumerable.Range(0, 6)
+                .Select(_ => chars[random.Next(chars.Length)])
+                .ToArray());
+        }
+    }
+}
+```
+
+**Criterio de Aceptación** ✅:
+- [ ] VotacionesController creado
+- [ ] Endpoint GET por ID
+- [ ] Endpoint POST para crear (requiere [Authorize])
+- [ ] RN-01: Participación (Administrador) creada automáticamente
+- [ ] RN-03 y RN-05 validadas (FluentValidation)
+
+---
+
+#### Tarea 4.5: Crear Authorization Handlers (API/Authorization)
+**Descripción**: Implementar autorización basada en recursos para RN-01 (roles contextuales)
+
+**Estructura**:
+```
+Votapp.API/
+└── Authorization/
+    ├── Requirements/
+    │   ├── SoyAdministradorVotacionRequirement.cs
+    │   └── SoyVotanteActivoRequirement.cs
+    └── Handlers/
+        ├── SoyAdministradorVotacionHandler.cs
+        └── SoyVotanteActivoHandler.cs
+```
+
+**Ejemplo 1 - Requirements**:
+```csharp
+// Votapp.API/Authorization/Requirements/SoyAdministradorVotacionRequirement.cs
+using Microsoft.AspNetCore.Authorization;
+
+namespace Votapp.API.Authorization.Requirements
+{
+    // RN-01: Verificar que el usuario es Administrador en una votación específica
+    public class SoyAdministradorVotacionRequirement : IAuthorizationRequirement
+    {
+    }
+
+    public class SoyVotanteActivoRequirement : IAuthorizationRequirement
+    {
+    }
+}
+```
+
+**Ejemplo 2 - Handlers**:
+```csharp
+// Votapp.API/Authorization/Handlers/SoyAdministradorVotacionHandler.cs
+using Microsoft.AspNetCore.Authorization;
+using Votapp.Domain.Enums;
+using Votapp.Domain.Interfaces;
+using Votapp.API.Authorization.Requirements;
+
+namespace Votapp.API.Authorization.Handlers
+{
+    // RN-01: Handler que verifica si el usuario tiene rol Administrador en la votación
+    public class SoyAdministradorVotacionHandler : AuthorizationHandler<SoyAdministradorVotacionRequirement>
+    {
+        private readonly IUnitOfWork _unitOfWork;
+
+        public SoyAdministradorVotacionHandler(IUnitOfWork unitOfWork)
+        {
+            _unitOfWork = unitOfWork;
+        }
+
+        protected override async Task HandleRequirementAsync(
+            AuthorizationHandlerContext context,
+            SoyAdministradorVotacionRequirement requirement)
+        {
+            // 1. Obtener usuarioId del JWT
+            var usuarioIdClaim = context.User.FindFirst("sub")?.Value;
+            if (string.IsNullOrEmpty(usuarioIdClaim) || !Guid.TryParse(usuarioIdClaim, out var usuarioId))
+            {
+                context.Fail();
+                return;
+            }
+
+            // 2. Obtener votacionId de la ruta (ej. /api/votaciones/{id})
+            // Este handler se usa dentro de un controlador con [Authorize(Policy = "SoyAdministrador")]
+            // Se necesita pasar el votacionId como contexto (ver ejemplo en controller)
+            var votacionId = context.Resource as Guid?;
+            if (votacionId == null)
+            {
+                context.Fail();
+                return;
+            }
+
+            // 3. Verificar en BD: ¿Usuario tiene Administrador en esta votación?
+            var rol = await _unitOfWork.Participaciones.GetUserRoleInVotacionAsync(usuarioId, votacionId.Value);
+            
+            if (rol == RoleUsuario.Administrador)
+            {
+                context.Succeed(requirement);
+            }
+            else
+            {
+                context.Fail();
+            }
+        }
+    }
+
+    // RN-01: Handler para verificar si usuario es Votante activo
+    public class SoyVotanteActivoHandler : AuthorizationHandler<SoyVotanteActivoRequirement>
+    {
+        private readonly IUnitOfWork _unitOfWork;
+
+        public SoyVotanteActivoHandler(IUnitOfWork unitOfWork)
+        {
+            _unitOfWork = unitOfWork;
+        }
+
+        protected override async Task HandleRequirementAsync(
+            AuthorizationHandlerContext context,
+            SoyVotanteActivoRequirement requirement)
+        {
+            var usuarioIdClaim = context.User.FindFirst("sub")?.Value;
+            if (string.IsNullOrEmpty(usuarioIdClaim) || !Guid.TryParse(usuarioIdClaim, out var usuarioId))
+            {
+                context.Fail();
+                return;
+            }
+
+            var votacionId = context.Resource as Guid?;
+            if (votacionId == null)
+            {
+                context.Fail();
+                return;
+            }
+
+            var rol = await _unitOfWork.Participaciones.GetUserRoleInVotacionAsync(usuarioId, votacionId.Value);
+            
+            if (rol == RoleUsuario.Votante || rol == RoleUsuario.Administrador)
+            {
+                context.Succeed(requirement);
+            }
+            else
+            {
+                context.Fail();
+            }
+        }
+    }
+}
+```
+
+**Ejemplo 3 - Registro en Program.cs**:
+```csharp
+// En Votapp.API/Program.cs
+
+// Agregar Authorization Policies
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("SoyAdministrador", policy =>
+        policy.Requirements.Add(new SoyAdministradorVotacionRequirement()));
+    
+    options.AddPolicy("SoyVotante", policy =>
+        policy.Requirements.Add(new SoyVotanteActivoRequirement()));
+});
+
+// Registrar Handlers
+builder.Services.AddScoped<IAuthorizationHandler, SoyAdministradorVotacionHandler>();
+builder.Services.AddScoped<IAuthorizationHandler, SoyVotanteActivoHandler>();
+```
+
+**Criterio de Aceptación** ✅:
+- [ ] Requirements creados
+- [ ] Handlers implementados (consultan tabla Participaciones)
+- [ ] Policies registradas en Program.cs
+- [ ] Se puede usar `[Authorize(Policy = "SoyAdministrador")]` en controllers
+
+---
+
+#### Tarea 4.6: Integrar JWT y Autenticación
+**Descripción**: Agregar autenticación JWT (bearer token)
+
+**Pasos**:
+1. Instalar NuGet: `Microsoft.AspNetCore.Authentication.JwtBearer`
+2. En Program.cs:
+```csharp
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.Authority = "https://tu-issuer.com"; // o local
+        options.Audience = "votapp-api";
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true
+        };
+    });
+
+app.UseAuthentication();
+app.UseAuthorization();
+```
+
+**Criterio de Aceptación** ✅:
+- [ ] JWT configurado
+- [ ] Endpoints sin [Authorize] funcionan
+- [ ] Endpoints con [Authorize] requieren bearer token
+- [ ] Token inválido retorna 401
+
+---
+
+#### Tarea 4.7: Crear VotosController (API/Controllers)
+**Descripción**: Endpoints para emitir votos (con RN-02 enforcement)
+
+**Ejemplo**:
+```csharp
+// Votapp.API/Controllers/VotosController.cs
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Votapp.Application.DTOs.Voto;
+using Votapp.Domain.Interfaces;
+using Votapp.Domain.Enums;
+
+namespace Votapp.API.Controllers
+{
+    [ApiController]
+    [Route("api/votaciones/{votacionId}/votos")]
+    [Authorize]
+    public class VotosController : BaseController
+    {
+        private readonly IUnitOfWork _unitOfWork;
+
+        public VotosController(IUnitOfWork unitOfWork)
+        {
+            _unitOfWork = unitOfWork;
+        }
+
+        [HttpPost]
+        public async Task<IActionResult> EmitirVoto(Guid votacionId, [FromBody] EmitirVotoRequest request)
+        {
+            // 1. Obtener usuarioId del JWT
+            var usuarioIdClaim = User.FindFirst("sub")?.Value;
+            if (!Guid.TryParse(usuarioIdClaim, out var usuarioId))
+                return ErrorResponse("No autorizado", 401);
+
+            // 2. Verificar que votación existe y está activa
+            var votacion = await _unitOfWork.Votaciones.GetWithOpcionsAsync(votacionId);
+            if (votacion == null)
+                return ErrorResponse("Votación no encontrada", 404);
+
+            if (votacion.Estado != EstadoVotacion.Activa)
+                return ErrorResponse("La votación no está activa", 400);
+
+            // 3. Verificar que votación está dentro de rango temporal (RN-04)
+            var ahora = DateTime.UtcNow;
+            if (ahora < votacion.FechaInicio || ahora > votacion.FechaCierre)
+                return ErrorResponse("Fuera del período de votación", 400);
+
+            // 4. Verificar que usuario está registrado en votación (Participación)
+            var participacion = await _unitOfWork.Participaciones
+                .GetByUserAndVotacionAsync(usuarioId, votacionId);
+            
+            if (participacion == null)
+                return ErrorResponse("No estás registrado en esta votación", 403);
+
+            // 5. Verificar que usuario no ha votado (RN-02)
+            var yaVoto = await _unitOfWork.Votos.UsuarioYaVotoAsync(votacionId, usuarioId);
+            if (yaVoto)
+                return ErrorResponse("Ya has votado en esta votación", 400);
+
+            // 6. Crear voto
+            var voto = new Votapp.Domain.Entities.Voto
+            {
+                Id = Guid.NewGuid(),
+                VotacionId = votacionId,
+                UsuarioId = usuarioId,
+                OpcionSeleccionadaId = request.OpcionId,
+                FechaVoto = DateTime.UtcNow
+            };
+
+            try
+            {
+                // RN-02: CreateVotoWithUniqueCheckAsync maneja race condition
+                await _unitOfWork.Votos.CreateVotoWithUniqueCheckAsync(voto);
+                return SuccessResponse(new { votoId = voto.Id }, "Voto registrado exitosamente", 201);
+            }
+            catch (InvalidOperationException ex)
+            {
+                // Race condition: 2do voto del mismo usuario llegó antes
+                return ErrorResponse(ex.Message, 409);
+            }
+        }
+
+        [HttpGet]
+        [Authorize(Policy = "SoyAdministrador")]
+        public async Task<IActionResult> GetResultados(Guid votacionId)
+        {
+            var votacion = await _unitOfWork.Votaciones.GetWithOpcionsAsync(votacionId);
+            if (votacion == null)
+                return ErrorResponse("Votación no encontrada", 404);
+
+            var votos = await _unitOfWork.Votos.GetByVotacionAsync(votacionId);
+            
+            var resultados = votacion.Opciones.Select(opcion => new
+            {
+                opcionId = opcion.Id,
+                texto = opcion.Texto,
+                cantidad = votos.Count(v => v.OpcionSeleccionadaId == opcion.Id),
+                porcentaje = votos.Count() > 0 
+                    ? Math.Round((votos.Count(v => v.OpcionSeleccionadaId == opcion.Id) * 100.0) / votos.Count(), 2)
+                    : 0
+            }).ToList();
+
+            return SuccessResponse(new 
+            { 
+                votacionId = votacionId, 
+                totalVotos = votos.Count(),
+                resultados = resultados
+            });
+        }
+    }
+}
+```
+
+**Criterio de Aceptación** ✅:
+- [ ] VotosController creado
+- [ ] Endpoint POST para emitir voto
+- [ ] RN-02 enforced: UsuarioYaVotoAsync + CreateVotoWithUniqueCheckAsync
+- [ ] RN-04 enforced: Verificación de período temporal
+- [ ] Endpoint GET resultados solo para Administrador ([Authorize(Policy = "SoyAdministrador")])
+- [ ] Race condition manejado con try-catch
+
+---
+
 ---
 
 ## 🎯 RESUMEN DE TAREAS POR FASE
@@ -1242,9 +1824,40 @@ namespace Votapp.API.Controllers
 | **0** | Proyecto base + NuGet | 30 min | N/A |
 | **1** | Domain Layer (Entities, Enums, Interfaces) | 1-2 horas | RN-01 a RN-10 (definidas) |
 | **2** | Application Layer (DTOs, Validators) | 1 hora | RN-03, RN-04 validadas |
-| **3** | Infrastructure Layer (DbContext, Repos, UnitOfWork) | 2 horas | RN-02, RN-05 (índices únicos) |
-| **4** | Presentation Layer (Controllers, DI) | 1-2 horas | N/A (coordina todo) |
-| **TOTAL** | Todas | **~6-7 horas** | **Completas** |
+| **3** | Infrastructure Layer (DbContext, Repos, UnitOfWork) + Race Conditions | 2-3 horas | RN-02, RN-05 (índices únicos, UNIQUE constraints) |
+| **4** | Presentation Layer (Controllers, DI, Authorization handlers) | 2-3 horas | RN-01 (Authorization), RN-02/RN-04 enforced en controllers |
+| **TOTAL** | Todas | **~7-9 horas** | **Completas** |
+
+**Detalles Fase 4**:
+- 4.1: DI en Program.cs
+- 4.2: BaseController (respuestas estándar)
+- 4.3: AuthController (register/login)
+- 4.4: VotacionesController (CRUD votaciones + crear Participacion)
+- 4.5: Authorization Handlers (SoyAdministrador, SoyVotante - RN-01)
+- 4.6: JWT Integration
+- 4.7: VotosController (emitir voto + RN-02 race condition handling)
+
+---
+
+## ✅ MATRIZ DE VALIDACIÓN: REGLAS DE NEGOCIO POR FASE
+
+| RN | Descripción | Fase | Tarea | Validación |
+|----|-------------|------|-------|-----------|
+| **RN-01** | Un rol por usuario por votación | 1 | 1.3 (Participacion entity) | UNIQUE(UsuarioId, VotacionId) en Participaciones |
+| | | 4 | 4.5 (Handlers) | SoyAdministrador/SoyVotante handlers consultan Participaciones |
+| **RN-02** | Un voto por usuario por votación | 3 | 3.2 (Repos) | UNIQUE(VotacionId, UsuarioId) en Votos + DbUpdateException handler |
+| | | 4 | 4.7 (VotosController) | CreateVotoWithUniqueCheckAsync + try-catch |
+| **RN-03** | Votación ≥2 opciones | 2 | 2.2 (Validators) | MinItemsValidator(Opciones, 2) |
+| | | 1 | 1.1 (VotacionOpcion) | ICollection<VotacionOpcion> Opciones |
+| **RN-04** | Votos solo durante período | 2 | 2.2 (Validators) | RangoFechasValidator |
+| | | 4 | 4.7 (VotosController) | Verificación: ahora >= FechaInicio && ahora <= FechaCierre |
+| **RN-05** | Códigos únicos por votación | 1 | 1.1 (Votacion entity) | string CodigoAcceso |
+| | | 3 | 3.3 (DbContext) | UNIQUE index en CodigoAcceso |
+| **RN-06** | ≥2 opciones para activar | 2 | 2.2 (Validators) | Validación en ActivarVotacionValidator |
+| **RN-07** | Solo creador edita si Paused | 4 | 4.4 (VotacionesController) | Verificación: votacion.CreadorId == usuarioId && votacion.Estado == Paused |
+| **RN-08** | Votos inmutables post-emisión | 1 | 1.1 (Voto entity) | No hay UpdateVoto/DeleteVoto en repo |
+| **RN-09** | Estados: Active, Paused, Finalized | 1 | 1.2 (EstadoVotacion enum) | enum EstadoVotacion { Paused, Activa, Finalizada } |
+| **RN-10** | Auto-cierre en fecha | N/A | Background Job | Usar hosted service o trigger en BD |
 
 ---
 
@@ -1273,4 +1886,25 @@ namespace Votapp.API.Controllers
 **¿Empezamos con FASE 0 (Setup)?**
 
 Confirma que entiendes todo y avanzamos. 🚀
+
+---
+
+## Integración con checklist y PR-by-PR
+
+He creado una checklist en `.github/CHECKLIST_IMPLEMENTACION_BACKEND.md` que organiza el trabajo en PRs pequeños y revisables. A continuación se muestra un resumen adaptado de ese plan y cómo se relaciona con las fases de este checklist:
+
+- PR 1 — `feature/solution-structure`: crear la solución y proyectos base (Domain, Application, Infrastructure, Presentation). Corresponde a FASE 0.
+- PR 2 — `feature/domain-entities`: implementar las entidades del dominio (FASE 1).
+- PR 3 — `feature/infrastructure-dbcontext`: `VotappDbContext`, mapeos y migración inicial (FASE 3).
+- PR 4 — `feature/application-services`: interfaces de repositorios y casos de uso (FASE 2/3).
+- PR 5 — `feature/presentation-api`: controllers, endpoints y **Autorización basada en recursos (policy/resource-based)** — implementar aquí los `Requirements` y `Handlers` para validar roles por votación.
+- PR 6 — `feature/signalr-results`: SignalR hub y emisión de eventos en tiempo real (FASE 4 y real-time).
+- PR 7 — `feature/tests-ci`: pruebas de integración y CI (pipes).
+
+Notas importantes:
+- La autorización resource-based (policies/handlers) debe diseñarse e integrarse en la PR 5, pero su especificación y tests pueden diseñarse en PR 4 (Application layer).
+- Asegúrate de incluir migraciones y pasos de DB en los PRs que cambien el modelo (PR 3). Documenta comandos `dotnet ef` en la descripción del PR.
+- Para evitar race conditions, añade las constraints únicas en la migración inicial (PR 3) y maneja excepciones de duplicado en la lógica de aplicación (PR 4).
+
+Si quieres, puedo generar los archivos de POCOs y `VotappDbContext` en una rama `feature/backend-skeleton` o bien dejar solo los documentos listos en `develop`. ¿Cuál prefieres?
 

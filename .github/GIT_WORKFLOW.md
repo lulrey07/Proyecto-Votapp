@@ -113,6 +113,7 @@ Proyecto Votapp/
 │   │   └── feature_request.md
 │   ├── PULL_REQUEST_TEMPLATE.md
 │   ├── GIT_WORKFLOW.md         # ⭐ Este documento
+│   ├── CHECKLIST_IMPLEMENTACION_BACKEND.md # Plan PR-by-PR y checklist de backend
 │   ├── copilot-instructions.md
 │   └── CONTRIBUTING.md         # Guía de contribución
 ├── .gitignore

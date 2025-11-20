@@ -519,3 +519,38 @@ Priority: HIGH | Est: 4 pts | RF-T02 | RNF-03
 **Traceability Path:** HU ↔ RF ↔ RN ↔ Epic ↔ CU (Complete bidirectional coverage)
 
 ---
+
+## 🔁 Actualizaciones (2025-11-20)
+
+Se han incorporado decisiones técnicas y documentación adicional al repositorio para orientar la implementación backend del MVP. Si ya trabajas con este archivo, revisa las referencias a continuación y los documentos asociados en `.github/`.
+
+- **Documentos nuevos / actualizados**:
+  - `.github/WORKFLOW_SISTEMA.md`: workflow completo del sistema (registro, ciclo de vida de votaciones, participación contextual, manejo de race conditions, autorización basada en recursos, arquitectura de BD).
+  - `.github/Respuestas de Copilot/CHECKLIST_IMPLEMENTACION_BACKEND.md`: checklist ampliado por fases (0–4) con ejemplos de código, mapeos de `DbContext`, repositorios, UnitOfWork, controllers y handlers de autorización.
+
+- **Decisiones técnicas clave**:
+  - Persistencia: usar **Entity Framework Core** con **MySQL** (migraciones EF y constraints en la BD).
+  - Entidades críticas: `Votacion` (Aggregate Root), `Participacion` (rol contextual por votación) y `Voto`.
+  - Integridad y race conditions:
+    - Añadir índice UNIQUE en `Votos` sobre `(VotacionId, UsuarioId)` para garantizar RN-02 (un voto por usuario por votación).
+    - Añadir índice UNIQUE en `Participaciones` sobre `(UsuarioId, VotacionId)` para garantizar RN-01 (un rol por usuario por votación).
+    - Manejar `DbUpdateException` en la capa de repositorios/casos de uso para convertir violaciones de constraint en errores de negocio controlados.
+  - Autorización: usar **authorization handlers** (resource-based) registrados en `Program.cs` para evaluar roles por votación (ej.: `SoyAdministradorVotacionRequirement` / `SoyVotanteActivoRequirement`). Las comprobaciones consultan la tabla `Participaciones`.
+  - Seguridad: autenticación **JWT Bearer**; usar claims (`sub`) para identificar `UsuarioId` en handlers y controllers.
+  - Real-time: planificar **SignalR** para emisión de resultados en tiempo real (PR / módulo dedicado).
+
+- **Práctica de PRs (PR-by-PR)**:
+  - PR1: estructura de solución y proyectos base (FASE 0).
+  - PR2: entidades del dominio (FASE 1) — incluir `Participacion` y enums.
+  - PR3: `VotappDbContext` y migración inicial (FASE 3) — incluir constraints UNIQUE para `Votos`, `Participaciones`, `Votacion.CodigoAcceso`.
+  - PR4: repositorios, UnitOfWork y casos de uso (FASE 2/3) — incluir manejo de `DbUpdateException`.
+  - PR5: controllers, JWT, policies/handlers de autorización (FASE 4).
+  - PR6: SignalR y emisión de eventos en tiempo real.
+  - PR7: tests de integración y CI.
+
+- **Notas operativas**:
+  - Documenta en cada PR los pasos de migración: `dotnet ef migrations add <name>` y `dotnet ef database update` y adjunta la salida o screenshots si procede.
+  - Para evitar flujos de trabajo peligrosos en producción, aplica constraints en la BD desde la primera migración y deja la capa de aplicación para manejar errores legibles al usuario.
+  - Considerar un servicio background (hosted service) para el auto-cierre de votaciones (`RN-10`) o triggers en BD si la infraestructura lo permite.
+
+Si quieres, puedo aplicar estos cambios de documentación al archivo `GUIA_DESARROLLO_BACKEND.md` y/o crear la rama `feature/backend-skeleton` con los POCOs, `VotappDbContext`, repositorios y controllers iniciales. Indica la opción que prefieres.
